@@ -18,7 +18,9 @@ namespace NightAudio {
     const cueTimesMs = [700, 5300, 7200, 10800, 15500, 19000, 21300, 23400, 25600, 26950, 28500, 34600]
     const cueSounds = [15, 3, 16, 17, 19, 13, 30, 22, 23, 29, 24, 18]
     let songCue = 0
+    // Only the next part of the music is kept in memory.
     let song: Buffer[] = []
+    let preparedPart = -1
     // 180 beats per minute: 36 eighth notes per section of six seconds. The picture times stay fixed.
     const songTickMs = 1000 / 6
     // Five voices leave three channels free for the studio signature chord.
@@ -145,13 +147,16 @@ namespace NightAudio {
         }
         return data
     }
-    function compose() {
+    // Builds the five voices of ONE part into song (about 5 KB). The whole music at once needed about 55 KB,
+    // more than the Calliope mini 3 has free next to the screen and the mine (the screen then stayed black).
+    function compose(section: number) {
         song=[]
+        preparedPart=section
         // Notes from D major. The roots of the chords in each section: D D G A D B G A D A D.
         const roots=[147,147,196,220,147,247,196,220,147,220,147]
         const thirds=[185,185,247,277,185,294,247,277,185,277,185]
         const fifths=[220,220,294,330,220,370,294,330,220,330,220]
-        for(let section=0;section<songTimesMs.length;section++) {
+        if(section>=0 && section<songTimesMs.length) {
             let root=roots[section], third=thirds[section], fifth=fifths[section]
             let steps=Math.round(songLengthsMs[section]/songTickMs)
             let bass: number[]=[], bassRhythm: number[]=[], arp: number[]=[], ticks: number[]=[]
@@ -273,7 +278,7 @@ namespace NightAudio {
         harmonyLow=signature(370,440,587,400)
         harmonyHigh=signature(440,587,740,340)
         busyUntilMs = 0; priority = 0; previousMode = -1; previousAgeMs = -1
-        introCue = 0; songCue = 0; silenced = false; song=[]
+        introCue = 0; songCue = 0; silenced = false; song=[]; preparedPart=-1
         nextAtmosphereMs=0; nextHumMs=0; atmosphereIndex=0
         // Soft hum, high drops, gentle air, a second pattern of drops; nothing below 100 hertz.
         atmospheres = [envelope(3,220,220,80,900,2600),
@@ -286,7 +291,7 @@ namespace NightAudio {
         stepMetal=envelope(18,1200,220,155,12,130)
         stepWaterRun=envelope(18,980,140,190,18,190)
         stepMetalRun=envelope(18,1400,180,220,12,160)
-        compose()
+        // The music is built part by part while the intro runs.
     }
 
     function stop() {
@@ -319,6 +324,7 @@ namespace NightAudio {
             stop()
             introCue = 0
             songCue = 0
+            song = []; preparedPart = -1
             nextAtmosphereMs=nowMs+1200
             nextHumMs=nowMs+600
         }
@@ -335,9 +341,15 @@ namespace NightAudio {
             while(songCue<songTimesMs.length && Night.ageMs>=songTimesMs[songCue]) {
                 let cue=songCue++
                 if(Night.ageMs-songTimesMs[cue]<150) {
-                    for(let voice=0;voice<5;voice++) music.playInstructions(0,song[cue*5+voice])
+                    if(preparedPart!=cue) compose(cue)
+                    // The mixer keeps each buffer while it plays; song may already move on to the next part.
+                    for(let voice=0;voice<5;voice++) music.playInstructions(0,song[voice])
+                    song=[]; preparedPart=-1
                 }
             }
+            // Build the next part right after the previous one starts, seconds before it is due, so its start only
+            // plays the sound.
+            if(songCue<songTimesMs.length && preparedPart!=songCue) compose(songCue)
             // If time jumps, old cues are thrown away instead of being played all at once.
             while (introCue < cueTimesMs.length
                 && Night.ageMs >= Night.introRealTimeMs(cueTimesMs[introCue])) {
